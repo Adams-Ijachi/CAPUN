@@ -1,0 +1,69 @@
+
+
+networks:
+  un-app:
+ 
+
+volumes:
+  un:
+
+services:
+  php:
+    
+    image: cap:latest
+    container_name: un-app  
+    tty: true
+    networks:
+      - un-app
+
+  mysql:
+    image: mysql:8.0
+    container_name: un-db
+    restart: unless-stopped
+    ports:
+      - 3305:3306
+    environment:
+      MYSQL_DATABASE: captain
+
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_PASSWORD: password
+      MYSQL_USER: user
+      SERVICE_TAGS: dev
+      SERVICE_NAME: mysql
+    
+    
+    volumes:
+      - un:/var/lib/mysql
+    networks:
+      - un-app
+    depends_on:
+      - php
+
+  phpmyadmin:
+    depends_on:
+        - mysql
+    image: 'phpmyadmin/phpmyadmin'
+    environment:
+        PMA_PORT: 3306
+        PMA_HOST: mysql
+    ports:
+        - 8022:80
+    networks:
+        - un-app
+  
+  nginx:
+    image: nginx-cap:latest
+    container_name: nginx-cap
+    restart: unless-stopped
+    tty: true
+    depends_on:
+      - php
+
+    
+    ports:
+      - 80:80
+  
+
+    networks:
+      - un-app
+

@@ -1,0 +1,134 @@
+workflow:
+    rules:
+        - if: $CI_COMMIT_BRANCH != "main" && $CI_PIPELINE_SOURCE != "merge_request_event"
+          when: never
+        - when: always
+
+image: php:8.0-fpm
+
+services:
+  - mysql:latest
+
+variables:
+  
+  DEPLOYMENT_SERVER: 54.234.37.2
+  APP_VERSION: $CI_PIPELINE_ID
+  
+  WEBSERVER_IMAGE_NAME: $CI_REGISTRY_IMAGE/nginx:1.$APP_VERSION
+  IMAGE_NAME: $CI_REGISTRY_IMAGE/php:1.$APP_VERSION
+  MYSQL_DATABASE: captain
+
+  MYSQL_ROOT_PASSWORD: password
+  MYSQL_PASSWORD: password
+  MYSQL_USER: user
+
+
+stages:
+  - "Test"
+  - "Build"
+  - "Deploy"
+
+
+run_tests:
+    stage: "Test"
+    before_script:
+      # Enter The project Directory
+      - cd ./src
+
+      # Install dependencies
+      - apt-get update && apt-get install git curl libpng-dev libonig-dev libxml2-dev zip unzip -y
+
+      # Install php extensions
+      -  docker-php-ext-install pdo pdo_mysql
+
+      # Install Composer
+      - curl -sS https://getcomposer.org/installer | php 
+      - php composer.phar install
+      # Copy Env Variables
+      - cp .env.example .env
+
+      # Generate Key and Cache The config
+      - php artisan key:generate
+      - php artisan config:cache
+        # Run database migrations.s
+      - php artisan migrate
+
+    script:
+        - php artisan test
+        - php composer.phar install --no-dev
+    cache:
+      key: ${CI_COMMIT_REF_SLUG}-composer
+      paths:
+        - ./src/vendor/
+        - ./src/node_modules/
+    
+    #Test report
+    artifacts:
+      when: always
+      paths:
+        - ./src/phpunit.xml
+        - ./src/vendor/
+        - ./src/node_modules/
+
+      reports:
+        junit: ./src/phpunit.xml
+
+build_app:
+  stage: "Build"
+  image: docker:stable
+  dependencies:
+    - run_tests
+  services:
+    - docker:dind
+  before_script:
+    - cd ./src
+    - ls
+    - cp .env.example .env
+    - cd ../
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker build -t $IMAGE_NAME .
+    - docker push $IMAGE_NAME
+    - echo "test"
+    
+build_web_server:
+  stage: "Build"
+  image: docker:stable
+  cache:
+    -
+  services:
+    - docker:dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker build -f nginx/conf.d/Dockerfile -t $WEBSERVER_IMAGE_NAME   .
+    - docker push $WEBSERVER_IMAGE_NAME
+
+
+
+
+deploy_app:
+  stage: "Deploy"
+  image: docker:stable
+  cache:
+    -
+  services:
+    - docker:dind
+  before_script:
+
+    - chmod 400 $SSH_PRIVATE_KEY
+    - scp -o StrictHostKeyChecking=no -i $SSH_PRIVATE_KEY ./docker-compose.prod.yml ubuntu@$DEPLOYMENT_SERVER:/home/ubuntu
+  
+  script:
+    - ssh -o StrictHostKeyChecking=no -i $SSH_PRIVATE_KEY  ubuntu@$DEPLOYMENT_SERVER "
+        docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY && 
+
+        export DC_APP_IMAGE_NAME=$IMAGE_NAME &&
+        export DC_WEB_IMAGE_NAME=$WEBSERVER_IMAGE_NAME &&
+
+        docker-compose -f docker-compose.prod.yml down &&
+        docker-compose -f docker-compose.prod.yml up -d"
+
+        
+ 
+

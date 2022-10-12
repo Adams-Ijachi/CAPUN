@@ -1,0 +1,67 @@
+version: '3.7'
+
+networks:
+  cap:
+
+volumes:
+  un:
+
+services:
+  php:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        user: un-app
+        uid: 1000
+    volumes:
+      - ./src:/var/www/html
+    container_name: un-app
+    tty: true
+    networks:
+      - cap
+
+  mysql:
+    image: mysql:8.0
+    container_name: un-db
+    restart: unless-stopped
+    ports:
+      - 4406:3306
+    env_file:
+      - ./src/.env
+    
+    volumes:
+      - un:/var/lib/mysql
+    networks:
+      - cap
+    depends_on:
+      - php
+
+  phpmyadmin:
+    depends_on:
+        - mysql
+    image: 'phpmyadmin/phpmyadmin'
+    environment:
+        PMA_PORT: 3306
+        PMA_HOST: mysql
+    ports:
+        - 8022:80
+    networks:
+        - cap
+  
+  nginx:
+    depends_on:
+      - php
+      - mysql
+    image: nginx:stable-alpine
+    container_name: travellist-nginx
+    restart: unless-stopped
+    ports:
+      - 8005:80
+      
+    volumes:
+     - ./src:/var/www/html
+     - ./nginx/conf.d/app.conf:/etc/nginx/conf.d/app.conf
+
+    networks:
+      - cap
